@@ -1,5 +1,7 @@
 package com.example.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -11,6 +13,8 @@ import org.springframework.kafka.annotation.EnableKafka;
 import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.*;
 import org.springframework.kafka.listener.ContainerProperties;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -18,6 +22,7 @@ import java.util.Map;
 @EnableKafka
 @Configuration
 public class KafkaConfig {
+    private static final Logger logger = LoggerFactory.getLogger(KafkaConfig.class);
 
     @Value("${spring.kafka.bootstrap-servers}")
     private String bootstrapServers;
@@ -49,7 +54,16 @@ public class KafkaConfig {
     public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
         ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(consumerFactory());
-        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL_IMMEDIATE);
+        factory.getContainerProperties().setAckMode(ContainerProperties.AckMode.MANUAL);
+
+        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
+            (consumerRecord, exception) -> {
+                logger.error("Failed to process message after max retries. Error: {}", exception.getMessage());
+            },
+            new FixedBackOff(1000L, 2L)
+        );
+        factory.setCommonErrorHandler(errorHandler);
+
         return factory;
     }
 

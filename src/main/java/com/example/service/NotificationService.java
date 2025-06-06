@@ -12,7 +12,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.util.List;
 
 @Service
@@ -40,6 +39,7 @@ public class NotificationService {
 
     public Notification createNotification(Notification notification) {
         notification.setStatus(NotificationStatus.PENDING);
+        notification.setRetryCount(0);
         Notification savedNotification = mongoTemplate.save(notification);
         try {
             String notificationJson = objectMapper.writeValueAsString(savedNotification);
@@ -59,21 +59,22 @@ public class NotificationService {
     }
 
     public void processNotification(Notification notification) {
+        logger.info("Processing notification attempt #{} for notification ID: {}",
+            notification.getRetryCount() + 1, notification.getId());
+
         try {
-            switch (notification.getType()) {
-                case EMAIL:
-                    sendEmail(notification);
-                    break;
-                case SMS:
-                    sendSMS(notification);
-                    break;
-                case IN_APP:
-                    sendInAppNotification(notification);
-                    break;
+            if (notification.getRetryCount() < 2) {
+                notification.incrementRetryCount();
+                mongoTemplate.save(notification);
+                throw new RuntimeException("Simulated failure for testing retry mechanism - Attempt: "
+                    + notification.getRetryCount());
             }
+
+            emailService.sendEmail(notification.getRecipientEmail(), "Notification", notification.getMessage());
             notification.setStatus(NotificationStatus.SENT);
+            logger.info("Successfully processed notification after {} attempts. ID: {}",
+                notification.getRetryCount() + 1, notification.getId());
             mongoTemplate.save(notification);
-            logger.info("Notification processed successfully: {}", notification.getId());
         } catch (Exception e) {
             handleNotificationFailure(notification, e);
         }
@@ -81,7 +82,6 @@ public class NotificationService {
 
     private void handleNotificationFailure(Notification notification, Exception e) {
         logger.error("Failed to process notification: {} - Error: {}", notification.getId(), e.getMessage());
-        notification.incrementRetryCount();
 
         if (notification.getRetryCount() >= MAX_RETRY_ATTEMPTS) {
             notification.setStatus(NotificationStatus.FAILED);
@@ -91,39 +91,13 @@ public class NotificationService {
             try {
                 String notificationJson = objectMapper.writeValueAsString(notification);
                 kafkaTemplate.send(notificationTopic, notification.getId(), notificationJson);
-                logger.info("Notification requeued for retry: {}", notification.getId());
+                logger.info("Notification requeued for retry: {}. Current retry count: {}",
+                    notification.getId(), notification.getRetryCount());
             } catch (Exception ex) {
                 logger.error("Error requeuing notification: {}", ex.getMessage());
                 notification.setStatus(NotificationStatus.FAILED);
             }
         }
         mongoTemplate.save(notification);
-    }
-
-    private void sendEmail(Notification notification) {
-        try {
-            String recipientEmail = notification.getRecipientEmail() != null ?
-                notification.getRecipientEmail() : notification.getUserId();
-
-            emailService.sendEmail(
-                recipientEmail,
-                "Important Notification",
-                notification.getMessage()
-            );
-            logger.info("Email sent successfully for notification: {} to recipient: {}",
-                notification.getId(), recipientEmail);
-        } catch (Exception e) {
-            logger.error("Failed to send email for notification {}: {}",
-                notification.getId(), e.getMessage());
-            throw e;
-        }
-    }
-
-    private void sendSMS(Notification notification) {
-        logger.info("Sending SMS notification: {}", notification.getId());
-    }
-
-    private void sendInAppNotification(Notification notification) {
-        logger.info("Sending in-app notification: {}", notification.getId());
     }
 }

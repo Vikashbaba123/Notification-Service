@@ -3,6 +3,7 @@ package com.example.consumer;
 import com.example.model.Notification;
 import com.example.service.NotificationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,8 +29,12 @@ public class NotificationConsumer {
             notificationService.processNotification(notification);
             acknowledgment.acknowledge();
             logger.info("Successfully processed and acknowledged notification: {}", notification.getId());
+        } catch (JsonProcessingException e) {
+            logger.error("Error parsing notification message: {}", e.getMessage());
+            throw new RuntimeException("Error processing message", e);
         } catch (Exception e) {
             logger.error("Error processing notification message: {}", e.getMessage());
+            throw e;
         }
     }
 }
